@@ -8,6 +8,9 @@
 #include <sys/shm.h>
 
 #define SHM_SIZE 1024
+#define Filled 0
+#define Ready 1
+#define NotReady -1
 
 struct memory {
     char buff[100];
@@ -104,8 +107,25 @@ int main() {
         return 1;
     }
 
-    
+    //store pid1 in shared memory
+    shmptr->pid1=pid;
+    shmptr->status=NotReady;
 
+    signal(SIGUSR1, signal_handler);
+    while(1) {
+        while(shmptr->status==NotReady) {
+            wait(NULL);
+        }
+        //take message from user1
+        printf("User1, enter message to send: ");
+        fgets(shmptr->buff, 100, stdin); //might need to change the size
+        shmptr->status=Filled;
+        //send message to user2
+        kill(shmptr->pid2, SIGUSR2);
+    }
+
+    shmdt(shmptr);
+    shmctl(shmid, IPC_RMID, NULL);
 
     return 0;
 }

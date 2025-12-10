@@ -4,8 +4,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include<sys/msg.h>
+#include <sys/shm.h>
 
 #define SHM_SIZE 1024
+#define Filled 0
+#define Ready 1
+#define NotReady -1
 
 struct memory {
     char buff[100];
@@ -90,5 +95,36 @@ int main() {
     int pid=getpid(); //user2 process id
     int key=1234; //key for shared memory
 
+    int shmid=shmget(key, sizeof(struct memory), IPC_CREAT | 0666);
+    if(shmid==-1) {
+        perror("shmget failed");
+        return 1;
+    }
+
+    shmptr=shmat(shmid, NULL, 0);
+    if(shmptr==(void*)-1) {
+        perror("shmat failed");
+        return 1;
+    }
+
+    //store pid2 in shared memory
+    shmptr->pid2=pid;
+    shmptr->status=NotReady;
+
+    signal(SIGUSR2, signal_handler);
+    while(1) {
+        wait(NULL);
+        //take message from user2
+        printf("User2, enter message to send: ");
+        fgets(shmptr->buff, 100, stdin); //might need to change the size
+        shmptr->status=Ready;
+        //send message to user1
+        kill(shmptr->pid1, SIGUSR1);
+        while(shmptr->status==Ready) {
+            continue;
+        }
+    }
+
+    shmdt(shmptr);
     return 0;
 }
