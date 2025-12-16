@@ -1,3 +1,4 @@
+//#include <cstdio>
 #include <ctype.h>
 #include <stdio.h>
 #include <signal.h>
@@ -15,6 +16,9 @@
 #define DASH 5
 #define CHAR_END 7
 #define WORD_END 9
+
+sigset_t block_mask, old_mask;
+
 struct memory {
     char buff[100];
     int status, pid1, pid2, signal_type;
@@ -93,14 +97,13 @@ char morse_to_text(const char* morse) {
             return table[i].character[0];
         }
     }
-    return '?'; //unknown character
+    return '\0'; //unknown character
 }
 
 void signal_handler(int signum) {
     //is signum is SIGUSR2, user2 receives a message from user1
     static char current_morse[10]="";
     if(signum==SIGUSR2) {
-        //printf("Received signal type: %d\n", shmptr->signal_type);
         if(shmptr->signal_type==DOT) {
             strcat(current_morse, ".");
         } else if(shmptr->signal_type==DASH) {
@@ -112,6 +115,7 @@ void signal_handler(int signum) {
             current_morse[0]='\0'; //reset
         } else if(shmptr->signal_type==WORD_END) {
             printf(" ");
+            fflush(stdout); //immediate printing
             current_morse[0]='\0'; //reset
         }
     }
@@ -136,29 +140,28 @@ int main() {
     //store pid2 in shared memory
     shmptr->pid2=pid;
     shmptr->status=NotReady;
+    signal(SIGUSR2, signal_handler);
 
-    signal(SIGUSR2, signal_handler);
-    /*while(1) {
-        wait(NULL);
-        //take message from user2
-        printf("User2, enter message to send: ");
-        fgets(shmptr->buff, 100, stdin); //might need to change the size
-        shmptr->status=Ready;
-        //send message to user1
-        kill(shmptr->pid1, SIGUSR1);
-        while(shmptr->status==Ready) {
-            continue;
-        }
-    }*/
-    signal(SIGUSR2, signal_handler);
     while(1) {
-        while(shmptr->status==NotReady) {
-            pause();
+        //wait for user1 to send message
+        printf("Waiting for User1 to send a message...\n");
+        printf("Received message: ");
+        fflush(stdout);
+        //waits until status is Filled
+        while(shmptr->status!=Filled) {
+            usleep(100000);
         }
+        printf("\n");    
+        //Block signals while reading input
+        sigemptyset(&block_mask);
+        sigaddset(&block_mask, SIGUSR2);
+        sigprocmask(SIG_BLOCK, &block_mask, &old_mask);
         //take message from user2
         printf("User2, enter message to send: ");
         fgets(shmptr->buff, 100, stdin); //might need to change the size
         shmptr->buff[strcspn(shmptr->buff, "\n")]='\0';
+        // Unblock signals
+        sigprocmask(SIG_SETMASK, &old_mask, NULL);
         shmptr->status=Filled;
         char morse_message[200];
         //send message to user1
@@ -183,8 +186,13 @@ int main() {
                 i++; //skip next space
             }
         }
-        shmptr->status=NotReady;
-        printf("Message sent\n");
+        //sends final signal to indicate last character
+        shmptr->signal_type=CHAR_END;
+        kill(shmptr->pid1, SIGUSR1);
+        sleep(2);
+        printf("\nMessage sent\n");
+        //user1's turn
+        shmptr->status=Ready;
     }
 
     shmdt(shmptr);
